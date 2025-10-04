@@ -1,8 +1,8 @@
 import { getInterviewById } from '@/lib/actions/interview.action';
 import { notFound } from 'next/navigation';
 
-export default async function InterviewDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default async function InterviewDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const interview = await getInterviewById(id);
   if (!interview) return notFound();
 
