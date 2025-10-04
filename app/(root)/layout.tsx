@@ -4,18 +4,19 @@ import Image from "next/image";
 import { ReactNode } from "react";
 import { isAuthenticated } from "@/lib/actions/auth.action";
 import { redirect } from "next/navigation";
+import Header from "@/components/Header";
 
 const RootLayout = async ({ children }: { children: ReactNode }) => {
   const isUserAuthenticated = await isAuthenticated();
   if (!isUserAuthenticated) redirect("/sign-in");
   return (
     <div>
+      <Header />
       <div className="root-layout">
-        <nav>
-          <Link href="/" className="flex items-center gap-2">
-            <Image src="/logo.svg" alt="MockMate Logo" width={38} height={32} />
-            <h2 className="text-primary-100">Mockly</h2>
-          </Link>
+        <nav className="card-border p-0.5 rounded-2xl">
+          <div className="dark-gradient rounded-2xl px-4 py-3">
+            
+          </div>
         </nav>
 
         {children}
