@@ -7,7 +7,13 @@ export const config = {
     wsUrl: process.env.LIVEKIT_WS_URL || 'wss://your-livekit-server.com',
   },
   
-  // Cerebras Configuration
+  // Gemini Configuration (Gemini 2.5 Flash is free tier)
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || '',
+    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+  },
+  
+  // Cerebras Configuration (deprecated - using Gemini instead)
   cerebras: {
     apiKey: process.env.CEREBRAS_API_KEY || '',
     baseUrl: process.env.CEREBRAS_BASE_URL || 'https://api.cerebras.ai/v1',
@@ -34,7 +40,7 @@ export function validateConfig(): { isValid: boolean; missingVars: string[] } {
   const requiredVars = [
     'LIVEKIT_API_KEY',
     'LIVEKIT_API_SECRET',
-    'CEREBRAS_API_KEY',
+    'GEMINI_API_KEY',
   ];
   
   const missingVars = requiredVars.filter(varName => !process.env[varName]);
