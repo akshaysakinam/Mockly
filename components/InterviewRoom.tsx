@@ -75,7 +75,7 @@ export default function InterviewRoom({
   // Ensure we never generate/speak overlapping questions
   const isGeneratingQuestionRef = useRef<boolean>(false);
 
-  // Sanitize LLM output to a single clear question; fix incomplete fragments
+  // Sanitize any LLM output to a single clear question
   const sanitizeToSingleQuestion = useCallback((rawText: string): string => {
     if (!rawText) return rawText;
     let text = rawText
@@ -88,13 +88,9 @@ export default function InterviewRoom({
     if (questionMatch) {
       text = questionMatch[0].trim();
     } else {
-      // No question mark: if fragment looks incomplete (e.g. "do you"), append a sensible ending
+      // If no question mark, take the first line/sentence and ensure it ends with '?'
       const firstSentence = (text.split(/\n|\.|!/)[0] || text).trim();
-      if (firstSentence.length > 15 && /\b(do|does|can|would|what|how|why)\b/i.test(firstSentence) && !firstSentence.endsWith('?')) {
-        text = `${firstSentence} find most relevant to your work?`;
-      } else {
-        text = firstSentence.endsWith('?') ? firstSentence : `${firstSentence}?`;
-      }
+      text = firstSentence.endsWith('?') ? firstSentence : `${firstSentence}?`;
     }
 
     // Final cleanups
@@ -466,80 +462,6 @@ Respond with ONLY the greeting message, no additional text.`,
     setIsListening(false);
   }, []);
 
-  // Detect if user wants to change role
-  const detectRoleChange = useCallback(async (text: string): Promise<{ isRoleChange: boolean; newRole?: string }> => {
-    const lowerText = text.toLowerCase();
-    
-    // Check for role change phrases
-    const roleChangePhrases = [
-      /(?:change|switch|update|modify|want|would like|prefer).*?(?:role|position|job|to be|as a)/i,
-      /(?:actually|instead|rather).*?(?:role|position|job|developer|engineer|designer|manager|analyst)/i,
-      /(?:i'm|i am|i want to be|i'd like to be|i prefer).*?(?:developer|engineer|designer|manager|analyst)/i,
-    ];
-    
-    const hasRoleChangePhrase = roleChangePhrases.some(pattern => pattern.test(text));
-    
-    if (!hasRoleChangePhrase) {
-      return { isRoleChange: false };
-    }
-    
-    // Extract the new role - improved pattern matching
-    const rolePatterns = [
-      /(?:change|switch|update|modify|want|would like|prefer|actually|instead|rather).*?(?:role|position|job|to be|as a)?\s*([a-zA-Z\s]+(?:developer|engineer|designer|manager|analyst|architect|specialist|lead))/i,
-      /(?:i'm|i am|i want to be|i'd like to be|i prefer)\s+([a-zA-Z\s]+(?:developer|engineer|designer|manager|analyst|architect|specialist|lead))/i,
-      /(?:for|as)\s+(?:a\s+)?([a-zA-Z\s]+(?:developer|engineer|designer|manager|analyst|architect|specialist|lead))/i,
-    ];
-    
-    for (const pattern of rolePatterns) {
-      const match = text.match(pattern);
-      if (match && match[1]) {
-        const newRole = match[1].trim();
-        // Clean up common prefixes
-        const cleanedRole = newRole.replace(/^(a|an|the)\s+/i, '').trim();
-        if (cleanedRole.length > 2) {
-          return { isRoleChange: true, newRole: cleanedRole };
-        }
-      }
-    }
-    
-    // Fallback: look for common role keywords
-    const roleKeywords = ['developer', 'engineer', 'designer', 'manager', 'analyst', 'architect', 'specialist', 'lead'];
-    for (const keyword of roleKeywords) {
-      const keywordPattern = new RegExp(`([a-zA-Z\\s]+${keyword})`, 'i');
-      const match = text.match(keywordPattern);
-      if (match && match[1] && hasRoleChangePhrase) {
-        const newRole = match[1].trim();
-        if (newRole.length > 2) {
-          return { isRoleChange: true, newRole };
-        }
-      }
-    }
-    
-    // If we detected a role change phrase but couldn't extract the role, use LLM
-    if (hasRoleChangePhrase) {
-      try {
-        const extractedRole = await cerebrasLLM.generateConversationalResponse(
-          text,
-          `The user said: "${text}"
-          
-Extract ONLY the job role/position they mentioned (e.g., "Python Developer", "Backend Engineer", "Full Stack Developer", etc.). 
-If no clear role is mentioned, respond with "NONE".
-Respond with ONLY the role name or "NONE", nothing else.`,
-          'interview'
-        );
-        
-        const cleanedExtracted = extractedRole.trim().replace(/^(a|an|the)\s+/i, '').replace(/\.$/, '').trim();
-        if (cleanedExtracted && cleanedExtracted.toLowerCase() !== 'none' && cleanedExtracted.length > 2) {
-          return { isRoleChange: true, newRole: cleanedExtracted };
-        }
-      } catch (error) {
-        console.error('Error extracting role with LLM:', error);
-      }
-    }
-    
-    return { isRoleChange: false };
-  }, [cerebrasLLM]);
-
   const handleAnswer = useCallback(async () => {
     if (isListening || !awaitingAnswer) return;
 
@@ -703,90 +625,6 @@ Respond with ONLY the response, no additional text.`,
             isGeneratingQuestionRef.current = false;
           }
         } else if (interviewPhase === 'interview') {
-          // Check for role change first
-          const roleChange = await detectRoleChange(answer);
-          if (roleChange.isRoleChange && roleChange.newRole) {
-            console.log('🔄 Role change detected:', roleChange.newRole);
-            
-            // Update candidate info with new role
-            const updatedInfo = { ...candidateInfo, role: roleChange.newRole };
-            setCandidateInfo(updatedInfo);
-            
-            // Generate acknowledgment response
-            try {
-              const acknowledgment = await cerebrasLLM.generateConversationalResponse(
-                answer,
-                `The candidate just mentioned they want to change their role to "${roleChange.newRole}". 
-                
-Generate a brief, natural acknowledgment (1 sentence) that:
-1. Confirms you understand the role change to ${roleChange.newRole}
-2. Indicates you'll ask questions based on the new role going forward
-3. Is conversational and friendly
-4. Will be spoken aloud
-
-Example: "Got it! I'll ask questions based on ${roleChange.newRole} from now on."
-
-Respond with ONLY the acknowledgment sentence, no additional text.`,
-                'interview'
-              );
-              
-              const acknowledgmentText = acknowledgment.trim();
-              
-              // Add acknowledgment to conversation history
-              addAssistantMessage(acknowledgmentText);
-              setCurrentMessage(acknowledgmentText);
-              
-              // Speak the acknowledgment
-              await speak(acknowledgmentText);
-              
-              // Generate next question based on NEW role
-              setAnswers(prev => [...prev, answer]);
-              
-              // Check if we've reached the total number of questions
-              const targetQuestions = interviewTargetQuestionsRef.current;
-              if (currentQuestionIndex + 1 >= targetQuestions) {
-                console.log('🎯 Interview completed! Moving to feedback phase.');
-                setInterviewCompleted(true);
-                setInterviewPhase('feedback');
-                return;
-              }
-              
-              // Generate next question with updated role
-              const nextQuestionIndex = currentQuestionIndex + 1;
-              if (isGeneratingQuestionRef.current) return;
-              isGeneratingQuestionRef.current = true;
-              
-              const nextQuestionRaw = await cerebrasLLM.generateInterviewQuestion({
-                role: roleChange.newRole, // Use the new role
-                experienceLevel: updatedInfo.experienceLevel || experienceLevel,
-                techStack: updatedInfo.techStack || techStack,
-                previousAnswers: [...answers, answer],
-                questionNumber: nextQuestionIndex + 1,
-                totalQuestions: interviewTargetQuestionsRef.current
-              });
-              const nextQuestion = sanitizeToSingleQuestion(nextQuestionRaw);
-
-              setQuestions(prev => [...prev, nextQuestion]);
-              setCurrentQuestion(nextQuestion);
-              setCurrentMessage(nextQuestion);
-              setCurrentQuestionIndex(nextQuestionIndex);
-              
-              // Speak the next question
-              await speak(nextQuestion);
-              
-              // Add question to conversation history
-              addAssistantMessage(nextQuestion);
-              setAwaitingAnswer(true);
-              isGeneratingQuestionRef.current = false;
-              
-              return;
-            } catch (error) {
-              console.error('Error handling role change:', error);
-              // Fallback: just update the role and continue
-              setCandidateInfo(prev => ({ ...prev, role: roleChange.newRole }));
-            }
-          }
-          
           // Handle interview response inline
           setAnswers(prev => [...prev, answer]);
           
@@ -866,7 +704,8 @@ Respond with ONLY the acknowledgment sentence, no additional text.`,
     } finally {
       setIsListening(false);
     }
-  }, [isListening, awaitingAnswer, interviewPhase, listen, candidateInfo, currentQuestionIndex, totalQuestions, answers, role, experienceLevel, techStack, cerebrasLLM, speak, sanitizeToSingleQuestion, detectRoleChange, addAssistantMessage]);
+  }, [isListening, awaitingAnswer, interviewPhase, listen, candidateInfo, currentQuestionIndex, totalQuestions, answers, role, experienceLevel, techStack, cerebrasLLM, speak, sanitizeToSingleQuestion]);
+
 
   const extractCandidateInfo = (text: string): Partial<CandidateInfo> => {
     const info: Partial<CandidateInfo> = {};
@@ -877,21 +716,10 @@ Respond with ONLY the acknowledgment sentence, no additional text.`,
       info.name = nameMatch[1].trim();
     }
     
-    // Extract role - improved pattern matching
-    const rolePatterns = [
-      /(?:role|position|job|targeting|applying for|i'm|i am|i want to be|i'd like to be)\s+(?:is\s+)?(?:a\s+)?([a-zA-Z\s]+(?:developer|engineer|designer|manager|analyst|architect|specialist|lead))/i,
-      /(?:for|as)\s+(?:a\s+)?([a-zA-Z\s]+(?:developer|engineer|designer|manager|analyst|architect|specialist|lead))/i,
-    ];
-    
-    for (const pattern of rolePatterns) {
-      const roleMatch = text.match(pattern);
-      if (roleMatch && roleMatch[1]) {
-        const extractedRole = roleMatch[1].trim().replace(/^(a|an|the)\s+/i, '').trim();
-        if (extractedRole.length > 2) {
-          info.role = extractedRole;
-          break;
-        }
-      }
+    // Extract role
+    const roleMatch = text.match(/(?:role|position|job|targeting|applying for)\s+(?:is\s+)?([a-zA-Z\s]+(?:developer|engineer|designer|manager|analyst))/i);
+    if (roleMatch) {
+      info.role = roleMatch[1].trim();
     }
     
     // Extract experience level
@@ -904,7 +732,7 @@ Respond with ONLY the acknowledgment sentence, no additional text.`,
     }
     
     // Extract tech stack using token approach to avoid regex pitfalls (e.g., c++/c#) and false positives
-    const techKeywords = ['javascript', 'react', 'node', 'python', 'java', 'typescript', 'angular', 'vue', 'php', 'ruby', 'go', 'rust', 'c++', 'c#', 'swift', 'kotlin', 'django', 'flask', 'express', 'nextjs', 'nestjs'];
+    const techKeywords = ['javascript', 'react', 'node', 'python', 'java', 'typescript', 'angular', 'vue', 'php', 'ruby', 'go', 'rust', 'c++', 'c#', 'swift', 'kotlin'];
     const tokens = text
       .toLowerCase()
       .split(/[\s,;()\\/]+/)
@@ -1104,105 +932,6 @@ Respond with ONLY the response, no additional text.`,
             isGeneratingQuestionRef.current = false;
           }
       } else if (interviewPhase === 'interview') {
-        // Check for role change first
-        const roleChange = await detectRoleChange(answer);
-        if (roleChange.isRoleChange && roleChange.newRole) {
-          console.log('🔄 Role change detected:', roleChange.newRole);
-          
-          // Update candidate info with new role
-          const updatedInfo = { ...candidateInfo, role: roleChange.newRole };
-          setCandidateInfo(updatedInfo);
-          
-          // Generate acknowledgment response
-          try {
-            const acknowledgment = await cerebrasLLM.generateConversationalResponse(
-              answer,
-              `The candidate just mentioned they want to change their role to "${roleChange.newRole}". 
-              
-Generate a brief, natural acknowledgment (1 sentence) that:
-1. Confirms you understand the role change to ${roleChange.newRole}
-2. Indicates you'll ask questions based on the new role going forward
-3. Is conversational and friendly
-4. Will be spoken aloud
-
-Example: "Got it! I'll ask questions based on ${roleChange.newRole} from now on."
-
-Respond with ONLY the acknowledgment sentence, no additional text.`,
-              'interview'
-            );
-            
-            const acknowledgmentText = acknowledgment.trim();
-            
-            // Add acknowledgment to conversation history
-            const ackMessage: Message = {
-              role: 'assistant',
-              content: acknowledgmentText,
-              timestamp: new Date()
-            };
-            setMessages(prev => [...prev, ackMessage]);
-            setCurrentMessage(acknowledgmentText);
-            
-            // Speak the acknowledgment
-            await speak(acknowledgmentText);
-            
-            // Handle interview response
-            setAnswers(prev => [...prev, answer]);
-            
-            // Check if we've reached the total number of questions
-            const targetQuestions = interviewTargetQuestionsRef.current;
-            if (currentQuestionIndex + 1 >= targetQuestions) {
-              console.log('🎯 Interview completed! Moving to feedback phase.');
-              setInterviewCompleted(true);
-              setInterviewPhase('feedback');
-              
-              setTextInput('');
-              setShowTextInput(false);
-              return;
-            }
-            
-            // Generate next question with updated role
-            const nextQuestionIndex = currentQuestionIndex + 1;
-            if (isGeneratingQuestionRef.current) return;
-            isGeneratingQuestionRef.current = true;
-            
-            const nextQuestionRaw = await cerebrasLLM.generateInterviewQuestion({
-              role: roleChange.newRole, // Use the new role
-              experienceLevel: updatedInfo.experienceLevel || experienceLevel,
-              techStack: updatedInfo.techStack || techStack,
-              previousAnswers: [...answers, answer],
-              questionNumber: nextQuestionIndex + 1,
-              totalQuestions: interviewTargetQuestionsRef.current
-            });
-            const nextQuestion = sanitizeToSingleQuestion(nextQuestionRaw);
-
-            setQuestions(prev => [...prev, nextQuestion]);
-            setCurrentQuestion(nextQuestion);
-            setCurrentMessage(nextQuestion);
-            setCurrentQuestionIndex(nextQuestionIndex);
-            
-            // Speak the next question
-            await speak(nextQuestion);
-            
-            // Add question to conversation history
-            const questionMessage: Message = {
-              role: 'assistant',
-              content: nextQuestion,
-              timestamp: new Date()
-            };
-            setMessages(prev => [...prev, questionMessage]);
-            setAwaitingAnswer(true);
-            isGeneratingQuestionRef.current = false;
-            
-            setTextInput('');
-            setShowTextInput(false);
-            return;
-          } catch (error) {
-            console.error('Error handling role change:', error);
-            // Fallback: just update the role and continue
-            setCandidateInfo(prev => ({ ...prev, role: roleChange.newRole }));
-          }
-        }
-        
         // Handle interview response inline
         setAnswers(prev => [...prev, answer]);
         
@@ -1296,7 +1025,7 @@ Respond with ONLY the acknowledgment sentence, no additional text.`,
     } finally {
       setIsLoading(false);
     }
-  }, [textInput, awaitingAnswer, interviewPhase, candidateInfo, currentQuestionIndex, totalQuestions, answers, role, experienceLevel, techStack, cerebrasLLM, speak, sanitizeToSingleQuestion, detectRoleChange, messages]);
+  }, [textInput, awaitingAnswer, interviewPhase, candidateInfo, currentQuestionIndex, totalQuestions, answers, role, experienceLevel, techStack, cerebrasLLM, speak, sanitizeToSingleQuestion]);
 
 
   return (

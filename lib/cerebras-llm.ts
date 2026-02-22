@@ -22,13 +22,12 @@ export class CerebrasLLM {
   private baseUrl: string;
 
   constructor() {
-    // Using Gemini instead of Cerebras
-    this.apiKey = process.env.GEMINI_API_KEY || '';
-    this.baseUrl = process.env.GEMINI_BASE_URL || '';
+    this.apiKey = process.env.CEREBRAS_API_KEY || '';
+    this.baseUrl = process.env.CEREBRAS_BASE_URL || 'https://api.cerebras.ai/v1';
     
     // For client-side usage, we'll handle the API key differently
     if (typeof window === 'undefined' && !this.apiKey) {
-      throw new Error('GEMINI_API_KEY environment variable is required');
+      throw new Error('CEREBRAS_API_KEY environment variable is required');
     }
   }
 
@@ -44,7 +43,7 @@ export class CerebrasLLM {
 
     while (attempt < maxRetries) {
       try {
-        const response = await fetch('/api/gemini/chat', {
+        const response = await fetch('/api/cerebras/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -66,36 +65,18 @@ export class CerebrasLLM {
         }
 
         if (!response.ok) {
-          // Try to get detailed error information
-          let errorMessage = `API error: ${response.status} ${response.statusText}`;
-          try {
-            const errorData = await response.json();
-            if (errorData.error) {
-              errorMessage = errorData.error;
-            }
-            if (errorData.details) {
-              errorMessage += ` - ${errorData.details}`;
-            }
-            console.error('API error details:', errorData);
-          } catch (e) {
-            // If we can't parse JSON, use the status text
-            console.error('Could not parse error response:', e);
-          }
-          throw new Error(errorMessage);
+          throw new Error(`API error: ${response.status} ${response.statusText}`);
         }
 
         const data = await response.json();
         
         if (data.content) {
           return data.content;
-        } else if (data.error) {
-          throw new Error(`API returned error: ${data.error}${data.details ? ` - ${data.details}` : ''}`);
         } else {
-          console.error('Unexpected API response format:', data);
-          throw new Error('No response content from API');
+          throw new Error('No response from API');
         }
       } catch (error) {
-        console.error('Error calling Gemini API:', error);
+        console.error('Error calling Cerebras API:', error);
         
         if (attempt === maxRetries - 1) {
           throw error;
@@ -216,11 +197,11 @@ Return your response in the following JSON format:
       const feedback = JSON.parse(cleanResponse);
       return feedback;
     } catch (error) {
-      console.error('❌ CRITICAL: Failed to parse Gemini model feedback JSON:', error);
-      console.log('📄 Raw Gemini response:', response);
+      console.error('❌ CRITICAL: Failed to parse Llama model feedback JSON:', error);
+      console.log('📄 Raw Llama response:', response);
       
       // Re-throw the error instead of providing fallback - we want REAL feedback only!
-      throw new Error(`Failed to parse Gemini model feedback: ${error}. Raw response: ${response}`);
+      throw new Error(`Failed to parse Llama model feedback: ${error}. Raw response: ${response}`);
     }
   }
 
@@ -249,29 +230,30 @@ This is question ${questionNumber} of ${totalQuestions} total questions.
 Previous answers so far:
 ${previousAnswers.map((a, i) => `${i + 1}. ${a}`).join("\n")}
 
-Your task: Write exactly ONE complete interview question. Critical rules:
-1. The question MUST be a full, complete sentence that ends with a question mark.
-2. Never cut off mid-sentence. Include the entire question from start to finish.
-3. Make it appropriate for ${experienceLevel} level and relevant to ${techStack.join(", ")}.
-4. Keep it conversational and natural for spoken delivery.
-5. Do not add multiple questions, intros like "Sure," or explanations—only the one question.
+Generate a single, focused interview question that:
+1. Is appropriate for ${experienceLevel} level
+2. Relates to their tech stack: ${techStack.join(", ")}
+3. Builds on previous answers (if any) without being repetitive
+4. Is conversational and natural for spoken delivery
+5. Is a single question, not multiple questions
+6. Avoids follow-up phrases like "can you tell me more" or "can you elaborate"
 
-Good examples (output only the question):
-- "What aspects of JavaScript do you find most interesting or challenging?"
-- "How would you explain the difference between let, const, and var to a beginner?"
-- "Can you describe a project where you used JavaScript to solve a real problem?"
-- "What is your experience with debugging JavaScript in the browser?"
+Examples of good questions:
+- "What is your experience with [specific technology]?"
+- "How do you approach [specific scenario] in your development work?"
+- "Can you describe a challenging project you worked on using [technology]?"
+- "What's your preferred method for [specific task]?"
 
-Reply with ONLY the single question text, nothing else.`;
+Respond with ONLY the question text, no explanations or additional text.`;
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: `Generate question ${questionNumber} of ${totalQuestions} for this ${experienceLevel} ${role} candidate. One complete question only.` },
+      { role: 'user' as const, content: `Generate question ${questionNumber} of ${totalQuestions} for this ${experienceLevel} ${role} candidate.` },
     ];
 
     try {
       const question = await this.generateResponse(messages, {
-        maxTokens: 300,
+        maxTokens: 150,
         temperature: 0.7,
       });
 
